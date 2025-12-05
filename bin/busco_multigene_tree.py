@@ -43,7 +43,7 @@ import shutil
 import subprocess
 import sys
 from collections import defaultdict
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 from Bio import SeqIO
@@ -51,9 +51,7 @@ from Bio.SeqRecord import SeqRecord
 from tqdm import tqdm
 
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s: %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s: %(message)s")
 
 SOFTWARES = ("mafft", "trimal", "AMAS.py", "iqtree")
 
@@ -329,14 +327,12 @@ def collect_gene_seqs(
 
     # 4. run in parallel over unique samples
     results: list[tuple[str, dict[str, list[SeqRecord]]]] = []
-    with ThreadPoolExecutor(max_workers=cores) as pool:
+    with ProcessPoolExecutor(max_workers=cores) as pool:
         futures = {
             pool.submit(parse_sample, sample, dirs): sample
             for sample, dirs in sample_dirs.items()
         }
-        for future in tqdm(
-            as_completed(futures), total=len(futures), desc="Parsing samples"
-        ):
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Parsing samples"):
             try:
                 results.append(future.result())
             except Exception as e:
@@ -367,7 +363,7 @@ def collect_gene_seqs(
             SeqIO.write(recs, out, "fasta")
 
     logging.info(f"Writing {len(gene_records)} gene files with {cores} threads")
-    with ThreadPoolExecutor(max_workers=cores) as pool:
+    with ProcessPoolExecutor(max_workers=cores) as pool:
         list(
             tqdm(
                 pool.map(write_gene, gene_records.items()),
@@ -391,9 +387,7 @@ def load_gene_dict(output_dir: Path) -> tuple[dict[str, set[str]], set[str]]:
 
     raw_dir = output_dir / "seqs" / "raw"
     if not raw_dir.exists() or not any(raw_dir.iterdir()):
-        logging.error(
-            f"Raw directory '{raw_dir}' is missing or empty. Run 'collect' first."
-        )
+        logging.error(f"Raw directory '{raw_dir}' is missing or empty. Run 'collect' first.")
         sys.exit(1)
 
     logging.info("Loading gene sequences from raw directory")
@@ -417,9 +411,7 @@ def select_shared_genes(
     frac_dict: dict[float, list[str]] = {}
     for frac in fractions:
         threshold = math.ceil(total * frac)
-        frac_dict[frac] = [
-            gene for gene, orgs in gene_dict.items() if len(orgs) >= threshold
-        ]
+        frac_dict[frac] = [gene for gene, orgs in gene_dict.items() if len(orgs) >= threshold]
 
     logging.debug(f"frac_dict: {frac_dict}")
     return frac_dict
@@ -435,9 +427,7 @@ def write_gene_lists(frac_dict: dict[float, list[str]], output_dir: Path) -> Non
         results_dir = output_dir / f"frac{pct}pct_results"
         results_dir.mkdir(parents=True, exist_ok=True)
         if any(results_dir.iterdir()):
-            logging.fatal(
-                f"{results_dir} is not empty — aborting to avoid mixing old results"
-            )
+            logging.fatal(f"{results_dir} is not empty — aborting to avoid mixing old results")
             sys.exit(1)
 
         file_path = results_dir / f"frac{pct}pct_genes.txt"
@@ -474,9 +464,7 @@ def align_and_trim(
         logging.error(f"No genes for the smallest fraction {smallest_frac}.")
         sys.exit(1)
 
-    logging.info(
-        f"Aligning genes in fraction: {smallest_frac} which has {len(genes)} genes"
-    )
+    logging.info(f"Aligning genes in fraction: {smallest_frac} which has {len(genes)} genes")
 
     for gene in tqdm(genes, desc="Align & trim"):
         infile = raw_dir / f"{gene}.faa"
@@ -509,9 +497,7 @@ def concat_alignments(
         concat_faa = results_dir / "concat.faa"
         partition_file = results_dir / "partitions.nex"
 
-        trimmed_files = [
-            str(output_dir / f"seqs/trimmed/{g}_trimmed.faa") for g in genes
-        ]
+        trimmed_files = [str(output_dir / f"seqs/trimmed/{g}_trimmed.faa") for g in genes]
 
         logging.info(f"Running AMAS concat: fraction {frac}")
         cmd = (
