@@ -135,8 +135,8 @@ process align_genes {
     label 'process_high'
     tag   "${gene}"
 
-    publishDir "${params.outdir}/seqs/aligned", mode: 'copy'
-    publishDir "${params.outdir}/seqs/trimmed", mode: 'copy'
+    publishDir "${params.outdir}/seqs/aligned", pattern: '*_aligned.faa', mode: 'copy'
+    publishDir "${params.outdir}/seqs/trimmed", pattern: '*_trimmed.faa', mode: 'copy'
 
     input:
     tuple val(gene), path(faa)
