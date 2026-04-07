@@ -43,7 +43,7 @@ import shutil
 import subprocess
 import sys
 from collections import defaultdict
-from concurrent.futures import Future, ProcessPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from Bio import SeqIO
@@ -327,7 +327,7 @@ def collect_gene_seqs(
 
     # 4. run in parallel over unique samples
     results: list[tuple[str, dict[str, list[SeqRecord]]]] = []
-    with ProcessPoolExecutor(max_workers=cores) as pool:
+    with ThreadPoolExecutor(max_workers=cores) as pool:
         futures = {
             pool.submit(parse_sample, sample, dirs): sample
             for sample, dirs in sample_dirs.items()
@@ -363,7 +363,7 @@ def collect_gene_seqs(
             SeqIO.write(recs, out, "fasta")
 
     logging.info(f"Writing {len(gene_records)} gene files with {cores} threads")
-    with ProcessPoolExecutor(max_workers=cores) as pool:
+    with ThreadPoolExecutor(max_workers=cores) as pool:
         list(
             tqdm(
                 pool.map(write_gene, gene_records.items()),
