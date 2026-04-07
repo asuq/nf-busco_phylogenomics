@@ -135,8 +135,8 @@ process align_genes {
     label 'process_high'
     tag   "${gene}"
 
-    publishDir "${params.outdir}/seqs/aligned", mode: 'copy'
-    publishDir "${params.outdir}/seqs/trimmed", mode: 'copy'
+    publishDir "${params.outdir}/seqs/aligned", pattern: '*_aligned.faa', mode: 'copy'
+    publishDir "${params.outdir}/seqs/trimmed", pattern: '*_trimmed.faa', mode: 'copy'
 
     input:
     tuple val(gene), path(faa)
@@ -149,7 +149,8 @@ process align_genes {
     def mafft_opts  = (params.mafft_opts  ?: '')
     def trimal_opts = (params.trimal_opts ?: '')
     """
-    mafft ${mafft_opts} --thread ${task.cpus} "${faa}" > "${gene}_aligned.faa"
+    mafft ${mafft_opts} --thread ${task.cpus} --threadtb ${task.cpus} \
+      --threadit ${task.cpus} "${faa}" > "${gene}_aligned.faa"
 
     trimal ${trimal_opts} \
       -in  "${gene}_aligned.faa" \
@@ -176,15 +177,21 @@ process infer_trees {
     path  trimmed_all                 // all *_trimmed.faa staged as inputs
 
     output:
-    path "concat.faa"
-    path "partitions.nex"
+    path "concat.faa", optional: true
+    path "partitions.nex", optional: true
     path "frac*", optional: true
 
     script:
     def amas_opts   = (params.amas_opts   ?: '')
     def iqtree_opts = (params.iqtree_opts ?: '')
     """
-    mapfile -t GENES < <(tail -n +3 "${gene_list}")
+    readarray -t GENES < <(tail -n +3 "${gene_list}" | sed -e 's/\r\$//' -e '/^[[:space:]]*\$/d')
+
+    if [ "\${#GENES[@]}" -eq 0 ]; then
+      echo "[WARNING] No genes found in the fraction file: ${gene_list}" >&2
+      exit 0
+    fi
+
     TRIMMED_FILES=""
     for gene in "\${GENES[@]}"; do
       f="\${gene}_trimmed.faa"
