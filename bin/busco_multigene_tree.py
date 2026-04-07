@@ -245,7 +245,7 @@ def load_genes_for_fraction(frac: float, output_dir: Path) -> list[str]:
     path = output_dir / f"frac{pct}pct_results/frac{pct}pct_genes.txt"
     with path.open() as f:
         lines = f.read().splitlines()
-    return lines[2:]  # skip header lines
+    return [line.strip() for line in lines[2:] if line.strip()]
 
 
 def collect_gene_seqs(
