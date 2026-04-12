@@ -34,16 +34,16 @@ Email: akito.shima@oist.jp
 """
 
 import argparse
+from decimal import Decimal, InvalidOperation, ROUND_CEILING
 import fnmatch
 import logging
-import math
 import os
 import shlex
 import shutil
 import subprocess
 import sys
 from collections import defaultdict
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from Bio import SeqIO
@@ -81,7 +81,10 @@ OPTION_DEFS = {
         kwargs=dict(
             type=str,
             default="0.9",
-            help=f"Comma-spliced completeness fraction(s)\n(e.g. '0.8,0.9') [default: 0.9]",
+            help=(
+                "Comma-spliced completeness fraction(s)\n"
+                "(e.g. '0.8,0.99,0.999') [default: 0.9]"
+            ),
         ),
     ),
     "mafft": dict(
@@ -221,28 +224,43 @@ def run_cmd(cmd: list[str], stdout=None) -> None:
 
 
 ## Functions for parsing arguments
-def parse_fractions(frac_str: str) -> list[float]:
-    """Parse comma-separated fractions into a sorted list of floats."""
-    fracs = set()
+def format_decimal(value: Decimal) -> str:
+    """Format a Decimal without trailing zeroes or scientific notation."""
+    value_str = format(value.normalize(), "f")
+    if "." in value_str:
+        value_str = value_str.rstrip("0").rstrip(".")
+    return value_str
+
+
+def fraction_to_label(frac: Decimal) -> str:
+    """Convert a fraction into an exact percentage label."""
+    pct = frac * Decimal("100")
+    return f"frac{format_decimal(pct).replace('.', 'p')}pct"
+
+
+def parse_fractions(frac_str: str) -> list[Decimal]:
+    """Parse comma-separated fractions into a sorted list of Decimal values."""
+    fracs: set[Decimal] = set()
     for frac in frac_str.split(","):
+        frac = frac.strip()
         try:
-            frac = float(frac)
-        except ValueError:
+            frac = Decimal(frac)
+        except InvalidOperation:
             logging.error("fractions must be comma-spliced numbers")
             sys.exit(1)
         if not 0 < frac <= 1:
             logging.error("fractions must be numbers between 0 and 1")
             sys.exit(1)
 
-        fracs.add(round(frac, 2))
+        fracs.add(frac.normalize())
 
     return sorted(fracs)
 
 
-def load_genes_for_fraction(frac: float, output_dir: Path) -> list[str]:
+def load_genes_for_fraction(frac: Decimal, output_dir: Path) -> list[str]:
     """Load the list of selected genes for a given fraction from disk."""
-    pct = int(frac * 100)
-    path = output_dir / f"frac{pct}pct_results/frac{pct}pct_genes.txt"
+    frac_label = fraction_to_label(frac)
+    path = output_dir / f"{frac_label}_results/{frac_label}_genes.txt"
     with path.open() as f:
         lines = f.read().splitlines()
     return [line.strip() for line in lines[2:] if line.strip()]
@@ -401,36 +419,36 @@ def load_gene_dict(output_dir: Path) -> tuple[dict[str, set[str]], set[str]]:
 
 
 def select_shared_genes(
-    gene_dict: dict[str, set[str]], org_set: set[str], fractions: list[float]
-) -> dict[float, list[str]]:
+    gene_dict: dict[str, set[str]], org_set: set[str], fractions: list[Decimal]
+) -> dict[Decimal, list[str]]:
     """For each fraction, return list of genes present above the threshold."""
 
     logging.info("Selecting shared genes")
 
     total = len(org_set)
-    frac_dict: dict[float, list[str]] = {}
+    frac_dict: dict[Decimal, list[str]] = {}
     for frac in fractions:
-        threshold = math.ceil(total * frac)
+        threshold = int((Decimal(total) * frac).to_integral_value(rounding=ROUND_CEILING))
         frac_dict[frac] = [gene for gene, orgs in gene_dict.items() if len(orgs) >= threshold]
 
     logging.debug(f"frac_dict: {frac_dict}")
     return frac_dict
 
 
-def write_gene_lists(frac_dict: dict[float, list[str]], output_dir: Path) -> None:
+def write_gene_lists(frac_dict: dict[Decimal, list[str]], output_dir: Path) -> None:
     """Write out which genes pass completeness threshold."""
 
     logging.info("Writing out gene lists")
 
     for frac, genes in frac_dict.items():
-        pct = int(frac * 100)
-        results_dir = output_dir / f"frac{pct}pct_results"
+        frac_label = fraction_to_label(frac)
+        results_dir = output_dir / f"{frac_label}_results"
         results_dir.mkdir(parents=True, exist_ok=True)
         if any(results_dir.iterdir()):
             logging.fatal(f"{results_dir} is not empty — aborting to avoid mixing old results")
             sys.exit(1)
 
-        file_path = results_dir / f"frac{pct}pct_genes.txt"
+        file_path = results_dir / f"{frac_label}_genes.txt"
         with file_path.open("w") as out:
             out.write(f"Number of genes considered: {len(genes)}\n")
             out.write("Analyzed genes:\n")
@@ -438,7 +456,7 @@ def write_gene_lists(frac_dict: dict[float, list[str]], output_dir: Path) -> Non
 
 
 def align_and_trim(
-    fractions: list[float],
+    fractions: list[Decimal],
     output_dir: Path,
     mafft_opts: list[str],
     trimal_opts: list[str],
@@ -480,20 +498,20 @@ def align_and_trim(
 
 
 def concat_alignments(
-    frac_dict: dict[float, list[str]], output_dir: Path, amas_opts: list[str]
-) -> dict[float, tuple[Path, Path]]:
+    frac_dict: dict[Decimal, list[str]], output_dir: Path, amas_opts: list[str]
+) -> dict[Decimal, tuple[Path, Path]]:
     """Run AMAS to concatenate trimmed gene alignments using AMAS"""
 
     logging.info(f"Concatenating alignments")
 
-    cafiles: dict[float, tuple[Path, Path]] = {}
+    cafiles: dict[Decimal, tuple[Path, Path]] = {}
     for frac, genes in frac_dict.items():
         if not genes:
             logging.warning(f"No genes for fraction {frac}, skipping...")
             continue
 
-        pct = int(frac * 100)
-        results_dir = output_dir / f"frac{pct}pct_results"
+        frac_label = fraction_to_label(frac)
+        results_dir = output_dir / f"{frac_label}_results"
         concat_faa = results_dir / "concat.faa"
         partition_file = results_dir / "partitions.nex"
 
@@ -519,7 +537,7 @@ def concat_alignments(
 
 
 def run_iqtree(
-    cafiles: dict[float, tuple[Path, Path]], output_dir: Path, iqtree_opts: list[str]
+    cafiles: dict[Decimal, tuple[Path, Path]], output_dir: Path, iqtree_opts: list[str]
 ) -> None:
     """Run IQ-TREE"""
 
@@ -528,9 +546,8 @@ def run_iqtree(
     cafiles_sorted = {key: cafiles[key] for key in sorted(cafiles.keys(), reverse=True)}
 
     for frac, (concat_faa, partition_file) in cafiles_sorted.items():
-        pct = int(frac * 100)
-
-        prefix = output_dir / f"frac{pct}pct_results/frac{pct}pct"
+        frac_label = fraction_to_label(frac)
+        prefix = output_dir / f"{frac_label}_results/{frac_label}"
 
         logging.info(f"Running IQ-TREE on {str(concat_faa)} and {str(partition_file)}")
         run_cmd(

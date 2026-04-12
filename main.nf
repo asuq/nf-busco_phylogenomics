@@ -22,7 +22,7 @@ def helpMessage() {
   Optional parameters:
     --help        Show this help message
     --outdir      Output directory (default: ./output)
-    --fraction    Comma-separated completeness fractions (default: 0.8,0.9,1.0)
+    --fraction    Comma-separated completeness fractions (default: 0.8,0.9,1.0; exact values such as 0.999 are supported)
     --busco_opts  Extra BUSCO flags (default: "")
     --mafft_opts  MAFFT options (default: --globalpair --maxiterate 1000)
     --trimal_opts trimAl options (default: -automated1)
@@ -36,6 +36,43 @@ def missingParametersError() {
     log.error "Missing input parameters"
     helpMessage()
     error "Please provide all required parameters: --sample and --lineage"
+}
+
+
+def parseFractions(String fractionArg) {
+    def fractions = []
+    for (token in fractionArg.split(',')) {
+        def trimmed = token.trim()
+        if (!trimmed) {
+            error "fractions must be comma-separated numbers"
+        }
+
+        BigDecimal fraction
+        try {
+            fraction = new BigDecimal(trimmed)
+        }
+        catch (NumberFormatException e) {
+            error "fractions must be comma-separated numbers"
+        }
+
+        if (fraction <= 0 || fraction > 1) {
+            error "fractions must be numbers between 0 and 1"
+        }
+
+        fractions << fraction.stripTrailingZeros()
+    }
+
+    if (!fractions) {
+        error "fractions must be comma-separated numbers"
+    }
+
+    return fractions.toSet().toList().sort()
+}
+
+
+def fractionLabel(BigDecimal fraction) {
+    def pct = fraction.multiply(new BigDecimal('100')).stripTrailingZeros().toPlainString()
+    return "frac${pct.replace('.', 'p')}pct"
 }
 
 
@@ -168,12 +205,12 @@ process align_genes {
 // Concatenate alignments and infer phylogenetic trees
 process infer_trees {
     label 'process_medium'
-    tag   "frac${pct}pct"
+    tag   "${frac_label}"
 
-    publishDir "${params.outdir}/frac${pct}pct_results", mode: 'copy'
+    publishDir "${params.outdir}/${frac_label}_results", mode: 'copy'
 
     input:
-    tuple val(pct), path(gene_list)
+    tuple val(frac_label), path(gene_list)
     path  trimmed_all                 // all *_trimmed.faa staged as inputs
 
     output:
@@ -209,28 +246,28 @@ process infer_trees {
       -T   ${task.cpus} \
       -s   concat.faa \
       -p   partitions.nex \
-      -pre "frac${pct}pct"
+      -pre "${frac_label}"
     """
 
     stub:
     """
-    echo "Stub process for inferring trees for fraction ${pct}%"
-    mkdir -p frac${pct}pct_results
-    touch "frac${pct}pct_results/concat.faa"
-    touch "frac${pct}pct_results/partitions.nex"
-    touch "frac${pct}pct_results/frac${pct}pct.best_model.nex"
-    touch "frac${pct}pct_results/frac${pct}pct.best_scheme"
-    touch "frac${pct}pct_results/frac${pct}pct.best_scheme.nex"
-    touch "frac${pct}pct_results/frac${pct}pct.bionj"
-    touch "frac${pct}pct_results/frac${pct}pct.ckp.gz"
-    touch "frac${pct}pct_results/frac${pct}pct.contree"
-    touch "frac${pct}pct_results/frac${pct}pct_genes.txt"
-    touch "frac${pct}pct_results/frac${pct}pct.iqtree"
-    touch "frac${pct}pct_results/frac${pct}pct.log"
-    touch "frac${pct}pct_results/frac${pct}pct.mldist"
-    touch "frac${pct}pct_results/frac${pct}pct.model.gz"
-    touch "frac${pct}pct_results/frac${pct}pct.splits.nex"
-    touch "frac${pct}pct_results/frac${pct}pct.treefile"
+    echo "Stub process for inferring trees for fraction ${frac_label}"
+    mkdir -p "${frac_label}_results"
+    touch "${frac_label}_results/concat.faa"
+    touch "${frac_label}_results/partitions.nex"
+    touch "${frac_label}_results/${frac_label}.best_model.nex"
+    touch "${frac_label}_results/${frac_label}.best_scheme"
+    touch "${frac_label}_results/${frac_label}.best_scheme.nex"
+    touch "${frac_label}_results/${frac_label}.bionj"
+    touch "${frac_label}_results/${frac_label}.ckp.gz"
+    touch "${frac_label}_results/${frac_label}.contree"
+    touch "${frac_label}_results/${frac_label}_genes.txt"
+    touch "${frac_label}_results/${frac_label}.iqtree"
+    touch "${frac_label}_results/${frac_label}.log"
+    touch "${frac_label}_results/${frac_label}.mldist"
+    touch "${frac_label}_results/${frac_label}.model.gz"
+    touch "${frac_label}_results/${frac_label}.splits.nex"
+    touch "${frac_label}_results/${frac_label}.treefile"
     """
 }
 
@@ -248,9 +285,9 @@ workflow {
     exit 1
   }
 
-  // Read fractions (e.g. "0.8,0.9,1.0"), pick smallest for alignment
-  frac_list = (params.fraction as String).tokenize(',').collect { it as Double }.sort()
-  smallest_pct = (frac_list[0] * 100) as int
+  // Read fractions (e.g. "0.8,0.99,0.999"), pick smallest for alignment
+  frac_list = parseFractions(params.fraction as String)
+  smallest_label = fractionLabel(frac_list[0])
 
   // Channel setup
   fasta_ch = Channel.fromPath(params.sample, checkIfExists: true)
@@ -269,8 +306,8 @@ workflow {
   // Build gene channel for the smallest fraction only -> per-gene alignment input
   min_frac_gene_ch = busco_genes.frac_results
                                 .flatten()
-                                .filter { it.name == "frac${smallest_pct}pct_results" }
-                                .map { dir -> file("${dir}/frac${smallest_pct}pct_genes.txt") }
+                                .filter { it.name == "${smallest_label}_results" }
+                                .map { dir -> file("${dir}/${smallest_label}_genes.txt") }
                                 .splitText()
                                 .map { it.trim() }                   // remove newline (\n)
                                 .filter {
@@ -294,16 +331,17 @@ workflow {
   // Gather all trimmed files to feed each infer task
   trimmed_all_ch = aligned.trimmed.collect()
 
-  // Build (pct_int, gene_list_file) tuples for ALL fractions found
+  // Build (fraction_label, gene_list_file) tuples for all fractions found
   frac_gene_file_ch = busco_genes.frac_results
                                 .flatten()
                                 .map { dir ->
-                                    def m = (dir.name =~ /frac(\d+)pct_results/)
-                                    assert m : "Unexpected directory name: ${dir.name}"
-                                    def pct = (m[0][1] as int)
-                                    tuple(pct, file("${dir}/frac${pct}pct_genes.txt"))
+                                    def suffix = '_results'
+                                    assert dir.name.endsWith(suffix) : "Unexpected directory name: ${dir.name}"
+                                    def frac_label = dir.name.substring(0, dir.name.length() - suffix.length())
+                                    assert frac_label.startsWith('frac') && frac_label.endsWith('pct') : "Unexpected fraction label: ${frac_label}"
+                                    tuple(frac_label, file("${dir}/${frac_label}_genes.txt"))
                                 }
 
-  // Run one infer job per integer percent in parallel
+  // Run one infer job per fraction label in parallel
   infer_trees(frac_gene_file_ch, trimmed_all_ch)
 }
