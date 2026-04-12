@@ -36,6 +36,8 @@ nextflow run ASUQ/busco_phylogenomics \
    --outdir <OUTDIR>
 ```
 
+`--fraction` accepts exact decimal values such as `0.999`. When the percentage is not an integer, output labels use `p` in place of the decimal point, for example `0.999 -> frac99p9pct_results`.
+
 <!--　> [!WARNING]
 > Please provide pipeline parameters via the CLI or Nextflow `-params-file` option. Custom config files including those provided by the `-c` Nextflow option can be used to provide any configuration _**except for parameters**_; see [docs](https://nf-co.re/docs/usage/getting_started/configuration#custom-configuration-files).　-->
 

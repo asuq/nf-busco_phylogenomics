@@ -60,7 +60,9 @@ busco_multigene_tree.py collect --help
 
 ## Fraction
 - `--fraction 0.8` builds a phylogenomic tree with genes that 80% of the samples possess
-- Multiple fractions can be selected with comma (`--fraction 0.8,0.9,1.0`)
+- `--fraction 0.999` builds a phylogenomic tree with genes that at least 99.9% of the samples possess
+- Multiple fractions can be selected with comma (`--fraction 0.8,0.99,0.999,1.0`)
+- Exact decimal fractions are preserved in output labels. Non-integer percentage labels use `p` in place of the decimal point, for example `0.999 -> frac99p9pct_results`
 
 ## Input directory structure
 
@@ -107,6 +109,9 @@ output/
 │   ├── concat.faa
 │   ├── partitions.nex
 │   └── frac90pct.iqtree.*  # IQ-TREE outputs
+├── frac99p9pct_results/ # results for 99.9% completeness
+│   ├── frac99p9pct_genes.txt
+│   └── frac99p9pct.iqtree.*  # if used 0.999 threshold
 └── frac80pct_results/ …    # if used 0.8 threshold
 ```
 
