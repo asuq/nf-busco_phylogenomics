@@ -30,7 +30,7 @@ Now, you can run the pipeline using:
 
 ```bash
 nextflow run ASUQ/busco_phylogenomics \
-   -profile <docker/singularity/.../institute> \
+   -profile <docker/singularity/gwdg/oist/...> \
    --sample sample.csv \
    --lineage <busco_lineage> \
    --outdir <OUTDIR>
