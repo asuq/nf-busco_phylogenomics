@@ -290,7 +290,7 @@ workflow {
   smallest_label = fractionLabel(frac_list[0])
 
   // Channel setup
-  fasta_ch = Channel.fromPath(params.sample, checkIfExists: true)
+  fasta_ch = channel.fromPath(params.sample, checkIfExists: true)
                     .splitCsv(strip: true, header: true)
 
   // Download BUSCO lineage dataset
@@ -306,14 +306,14 @@ workflow {
   // Build gene channel for the smallest fraction only -> per-gene alignment input
   min_frac_gene_ch = busco_genes.frac_results
                                 .flatten()
-                                .filter { it.name == "${smallest_label}_results" }
+                                .filter { dir -> dir.name == "${smallest_label}_results" }
                                 .map { dir -> file("${dir}/${smallest_label}_genes.txt") }
                                 .splitText()
-                                .map { it.trim() }                   // remove newline (\n)
-                                .filter {
-                                  it &&                              // drop blanks
-                                  !it.startsWith('Number of genes considered') &&
-                                  !it.startsWith('Analyzed genes')   // drop the 2 header lines
+                                .map { line -> line.trim() }         // remove newline (\n)
+                                .filter { line ->
+                                  line &&                            // drop blanks
+                                  !line.startsWith('Number of genes considered') &&
+                                  !line.startsWith('Analyzed genes') // drop the 2 header lines
                                 }
 
 
