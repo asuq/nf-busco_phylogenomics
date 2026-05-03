@@ -53,3 +53,6 @@ temp/
 # OS junk
 Thumbs.db
 Desktop.ini
+
+# Local Codex notes
+.untracked/
