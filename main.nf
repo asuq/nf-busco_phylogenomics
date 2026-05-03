@@ -41,17 +41,17 @@ def missingParametersError() {
 
 def parseFractions(String fractionArg) {
     def fractions = []
-    for (token in fractionArg.split(',')) {
+    fractionArg.split(',').each { token ->
         def trimmed = token.trim()
         if (!trimmed) {
             error "fractions must be comma-separated numbers"
         }
 
-        BigDecimal fraction
+        def fraction = null
         try {
             fraction = new BigDecimal(trimmed)
         }
-        catch (NumberFormatException e) {
+        catch (NumberFormatException _e) {
             error "fractions must be comma-separated numbers"
         }
 
