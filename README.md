@@ -38,6 +38,11 @@ nextflow run ASUQ/busco_phylogenomics \
 
 `--fraction` accepts exact decimal values such as `0.999`. When the percentage is not an integer, output labels use `p` in place of the decimal point, for example `0.999 -> frac99p9pct_results`.
 
+BUSCO runs with `--tar` by default to reduce inode pressure from high-file-count
+BUSCO subdirectories. The collector reads both tarred and untarred BUSCO
+sequence output. Use `--busco_tar false` to keep the legacy untarred BUSCO
+output layout.
+
 <!--　> [!WARNING]
 > Please provide pipeline parameters via the CLI or Nextflow `-params-file` option. Custom config files including those provided by the `-c` Nextflow option can be used to provide any configuration _**except for parameters**_; see [docs](https://nf-co.re/docs/usage/getting_started/configuration#custom-configuration-files).　-->
 

@@ -96,6 +96,10 @@ input/
 └── …
 ```
 
+The `collect` subcommand also accepts BUSCO `--tar` archives in
+`busco_sequences`, for example `single_copy_busco_sequences.tar.gz` and
+`multi_copy_busco_sequences.tar.gz`, without extracting them to disk.
+
 
 ## Output
 ```

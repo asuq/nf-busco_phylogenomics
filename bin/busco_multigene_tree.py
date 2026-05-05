@@ -10,7 +10,7 @@ Purpose:
 
 Subcommands:
     all                         Run all steps: collect, select, align, infer
-    collect                     Collect per-gene FASTA files from BUSCO outputs
+    collect                     Collect BUSCO FASTAs from directories or tar archives
     select                      Select shared genes & write gene lists
     align                       Align & trim gene alignments (mafft & trimAl)
     infer                       Concatenate & build tree (AMAS & IQ-TREE)
@@ -35,16 +35,18 @@ Email: akito.shima@oist.jp
 
 import argparse
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
-import fnmatch
+import io
 import logging
 import os
 import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import TextIO
 
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
@@ -54,6 +56,8 @@ from tqdm import tqdm
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s: %(message)s")
 
 SOFTWARES = ("mafft", "trimal", "AMAS.py", "iqtree")
+BUSCO_SEQUENCE_DIRS = ("single_copy_busco_sequences", "multi_copy_busco_sequences")
+BUSCO_SEQUENCE_ARCHIVES = tuple(f"{dirname}.tar.gz" for dirname in BUSCO_SEQUENCE_DIRS)
 
 OPTION_DEFS = {
     "input_dir": dict(
@@ -144,7 +148,7 @@ OPTION_DEFS = {
 SUBCMD_OPTS = {
     "collect": (
         ("input_dir", "out_dir", "cores", "verbose"),
-        "Collect per-gene FASTA files from BUSCO outputs",
+        "Collect per-gene FASTA files from BUSCO outputs or BUSCO --tar archives",
     ),
     "select": (
         ("input_dir", "out_dir", "fraction", "cores", "verbose"),
@@ -266,6 +270,116 @@ def load_genes_for_fraction(frac: Decimal, output_dir: Path) -> list[str]:
     return [line.strip() for line in lines[2:] if line.strip()]
 
 
+def find_busco_sequence_sources(input_dir: Path) -> list[Path]:
+    """Find BUSCO sequence directories and BUSCO --tar archives."""
+    sources: list[Path] = []
+    for root, dirs, files in os.walk(input_dir, followlinks=True):
+        root_path = Path(root)
+        for dirname in dirs:
+            if dirname in BUSCO_SEQUENCE_DIRS:
+                dirpath = root_path / dirname
+                if dirpath.is_dir():
+                    sources.append(dirpath)
+
+        for filename in files:
+            if filename in BUSCO_SEQUENCE_ARCHIVES:
+                archive_path = root_path / filename
+                if archive_path.is_file():
+                    sources.append(archive_path)
+
+    return sorted(sources)
+
+
+def busco_sequence_source_name(source: Path) -> str:
+    """Return the BUSCO sequence source name without a tar suffix."""
+    if source.name.endswith(".tar.gz"):
+        return source.name.removesuffix(".tar.gz")
+    return source.name
+
+
+def busco_sample_name(input_dir: Path, source: Path) -> str:
+    """Extract the sample name from a BUSCO sequence source path."""
+    try:
+        return source.relative_to(input_dir).parts[-5]
+    except (IndexError, ValueError):
+        logging.error(f"Can't extract sample name from path: {source}")
+        sys.exit(1)
+
+
+def set_record_sample(record: SeqRecord, sample: str) -> SeqRecord:
+    """Set BUSCO record identifiers to the sample name."""
+    record.id = sample
+    record.description = ""
+    return record
+
+
+def parse_busco_sequence_file(
+    handle: TextIO,
+    sample: str,
+    first_only: bool,
+) -> list[SeqRecord]:
+    """Parse a BUSCO FASTA handle and return sample-labelled records."""
+    if first_only:
+        record = next(SeqIO.parse(handle, "fasta"), None)
+        return [set_record_sample(record, sample)] if record else []
+
+    return [set_record_sample(record, sample) for record in SeqIO.parse(handle, "fasta")]
+
+
+def parse_busco_sequence_dir(
+    seq_dir: Path,
+    sample: str,
+    first_only: bool,
+) -> dict[str, list[SeqRecord]]:
+    """Parse BUSCO FASTA files from an untarred sequence directory."""
+    local: dict[str, list[SeqRecord]] = defaultdict(list)
+    for faa_file in sorted(seq_dir.glob("*.faa")):
+        logging.debug(f"Extracting gene seq from {str(faa_file)}")
+        gene = faa_file.stem
+        with faa_file.open() as handle:
+            local[gene].extend(parse_busco_sequence_file(handle, sample, first_only))
+    return local
+
+
+def parse_busco_sequence_archive(
+    archive_path: Path,
+    sample: str,
+    first_only: bool,
+) -> dict[str, list[SeqRecord]]:
+    """Stream BUSCO FASTA records from a BUSCO --tar archive."""
+    local: dict[str, list[SeqRecord]] = defaultdict(list)
+    with tarfile.open(archive_path, "r:gz") as archive:
+        members = sorted(
+            (
+                member
+                for member in archive.getmembers()
+                if member.isfile() and Path(member.name).suffix == ".faa"
+            ),
+            key=lambda member: member.name,
+        )
+        for member in members:
+            logging.debug(f"Extracting gene seq from {archive_path}:{member.name}")
+            gene = Path(member.name).stem
+            fasta_handle = archive.extractfile(member)
+            if fasta_handle is None:
+                continue
+            with io.TextIOWrapper(fasta_handle, encoding="utf-8") as handle:
+                local[gene].extend(parse_busco_sequence_file(handle, sample, first_only))
+    return local
+
+
+def parse_busco_sequence_source(
+    source: Path,
+    sample: str,
+) -> dict[str, list[SeqRecord]]:
+    """Parse BUSCO sequence records from a directory or tar archive."""
+    source_name = busco_sequence_source_name(source)
+    first_only = source_name == "multi_copy_busco_sequences"
+    if source.is_dir():
+        return parse_busco_sequence_dir(source, sample, first_only)
+    return parse_busco_sequence_archive(source, sample, first_only)
+
+
 def collect_gene_seqs(
     input_dir: Path,
     output_dir: Path,
@@ -284,71 +398,34 @@ def collect_gene_seqs(
 
     logging.info("Collecting genes from BUSCO outputs")
 
-    # 1. find both single- and multi-copy directories
-    # Note: recurse_symlinks requires Python 3.13+
-    # all_dirs: list[Path] = [
-    #     d
-    #     for d in input_dir.rglob("*_copy_busco_sequences", recurse_symlinks=True)
-    #     if d.is_dir()
-    # ]
-
-    all_dirs: list[Path] = []
-    for root, dirs, _ in os.walk(input_dir, followlinks=True):
-        for dirname in dirs:
-            if fnmatch.fnmatch(dirname, "*_copy_busco_sequences"):
-                dirpath = Path(root) / dirname
-                if dirpath.is_dir():
-                    all_dirs.append(dirpath)
-
-    if not all_dirs:
-        logging.error(f"No BUSCO output directories found in {input_dir}")
+    sequence_sources = find_busco_sequence_sources(input_dir)
+    if not sequence_sources:
+        logging.error(f"No BUSCO sequence sources found in {input_dir}")
         sys.exit(1)
 
-    # 2. group by sample name (extracted the same way you did before)
-    sample_dirs: dict[str, list[Path]] = defaultdict(list)
-    for d in all_dirs:
-        try:
-            sample = d.relative_to(input_dir).parts[-5]
-        except IndexError:
-            logging.error(f"Can't extract sample name from path: {d}")
-            sys.exit(1)
-        sample_dirs[sample].append(d)
+    sample_sources: dict[str, list[Path]] = defaultdict(list)
+    for source in sequence_sources:
+        sample = busco_sample_name(input_dir, source)
+        sample_sources[sample].append(source)
 
     logging.info(
-        f"Found {len(sample_dirs)} samples "
-        f"(across {len(all_dirs)} single/multi dirs); parsing with {cores} threads"
+        f"Found {len(sample_sources)} samples "
+        f"(across {len(sequence_sources)} single/multi sources); parsing with {cores} threads"
     )
 
-    def parse_sample(sample: str, dirs: list[Path]):
-        """Function to parse a single sample directory"""
-
+    def parse_sample(sample: str, sources: list[Path]):
+        """Parse BUSCO sequence sources for a single sample."""
         local: dict[str, list[SeqRecord]] = defaultdict(list)
-        for seq_dir in dirs:
-            is_multi = seq_dir.name == "multi_copy_busco_sequences"
-            for faa_file in seq_dir.glob("*.faa"):
-                logging.debug(f"Extracting gene seq from {str(faa_file)}")
-                gene = faa_file.stem
-                if is_multi:
-                    # only first record
-                    rec = next(SeqIO.parse(faa_file, "fasta"), None)
-                    if rec:
-                        rec.id = sample
-                        rec.description = ""
-                        local[gene].append(rec)
-                else:
-                    # all (should be one) record(s)
-                    for rec in SeqIO.parse(faa_file, "fasta"):
-                        rec.id = sample
-                        rec.description = ""
-                        local[gene].append(rec)
+        for source in sources:
+            for gene, records in parse_busco_sequence_source(source, sample).items():
+                local[gene].extend(records)
         return sample, local
 
-    # 4. run in parallel over unique samples
     results: list[tuple[str, dict[str, list[SeqRecord]]]] = []
     with ThreadPoolExecutor(max_workers=cores) as pool:
         futures = {
-            pool.submit(parse_sample, sample, dirs): sample
-            for sample, dirs in sample_dirs.items()
+            pool.submit(parse_sample, sample, sources): sample
+            for sample, sources in sample_sources.items()
         }
         for future in tqdm(as_completed(futures), total=len(futures), desc="Parsing samples"):
             try:

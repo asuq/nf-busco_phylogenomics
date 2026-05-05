@@ -23,6 +23,7 @@ def helpMessage() {
     --help        Show this help message
     --outdir      Output directory (default: ./output)
     --fraction    Comma-separated completeness fractions (default: 0.8,0.9,1.0; exact values such as 0.999 are supported)
+    --busco_tar   Compress BUSCO high-file-count folders with --tar (default: true)
     --busco_opts  Extra BUSCO flags (default: "")
     --mafft_opts  MAFFT options (default: --globalpair --maxiterate 1000)
     --trimal_opts trimAl options (default: -automated1)
@@ -118,6 +119,11 @@ process busco {
     path "${sample}", emit: busco_dir
 
     script:
+    def busco_user_opts = busco_opts ?: ''
+    def busco_tar_enabled = params.busco_tar.toString().toBoolean()
+    def busco_has_tar = busco_user_opts.tokenize().contains('--tar')
+    def busco_tar = busco_tar_enabled && !busco_has_tar ? '--tar' : ''
+    def busco_extra_opts = [busco_tar, busco_user_opts].findAll { it }.join(' ')
     """
     busco --in "${fasta}" \
           --lineage_dataset "${params.lineage}" \
@@ -125,7 +131,7 @@ process busco {
           --mode genome \
           --cpu ${task.cpus} \
           --offline \
-          ${busco_opts}
+          ${busco_extra_opts}
     """
 
     stub:
@@ -162,8 +168,9 @@ process collect_and_select_genes {
     stub:
     """
     echo "Stub process for collecting and selecting BUSCO genes"
-    mkdir -p seqs/raw
+    mkdir -p seqs/raw frac100pct_results
     touch seqs/raw/geneA.faa
+    printf 'Number of genes considered: 1\\nAnalyzed genes:\\ngeneA\\n' > frac100pct_results/frac100pct_genes.txt
     """
 }
 
