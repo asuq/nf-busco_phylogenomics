@@ -73,7 +73,7 @@ def parseFractions(String fractionArg) {
 
 def fractionLabel(BigDecimal fraction) {
     def pct = fraction.multiply(new BigDecimal('100')).stripTrailingZeros().toPlainString()
-    return "frac${pct.replace('.', 'p')}pct"
+    return "frac${pct.replace('.', '_')}pct"
 }
 
 
@@ -214,7 +214,9 @@ process infer_trees {
     label 'process_medium'
     tag   "${frac_label}"
 
-    publishDir "${params.outdir}/${frac_label}_results", mode: 'copy'
+    publishDir "${params.outdir}", mode: 'copy', saveAs: { filename ->
+        "${frac_label}_results/${filename}"
+    }
 
     input:
     tuple val(frac_label), path(gene_list)
@@ -259,22 +261,21 @@ process infer_trees {
     stub:
     """
     echo "Stub process for inferring trees for fraction ${frac_label}"
-    mkdir -p "${frac_label}_results"
-    touch "${frac_label}_results/concat.faa"
-    touch "${frac_label}_results/partitions.nex"
-    touch "${frac_label}_results/${frac_label}.best_model.nex"
-    touch "${frac_label}_results/${frac_label}.best_scheme"
-    touch "${frac_label}_results/${frac_label}.best_scheme.nex"
-    touch "${frac_label}_results/${frac_label}.bionj"
-    touch "${frac_label}_results/${frac_label}.ckp.gz"
-    touch "${frac_label}_results/${frac_label}.contree"
-    touch "${frac_label}_results/${frac_label}_genes.txt"
-    touch "${frac_label}_results/${frac_label}.iqtree"
-    touch "${frac_label}_results/${frac_label}.log"
-    touch "${frac_label}_results/${frac_label}.mldist"
-    touch "${frac_label}_results/${frac_label}.model.gz"
-    touch "${frac_label}_results/${frac_label}.splits.nex"
-    touch "${frac_label}_results/${frac_label}.treefile"
+    touch "concat.faa"
+    touch "partitions.nex"
+    touch "${frac_label}.best_model.nex"
+    touch "${frac_label}.best_scheme"
+    touch "${frac_label}.best_scheme.nex"
+    touch "${frac_label}.bionj"
+    touch "${frac_label}.ckp.gz"
+    touch "${frac_label}.contree"
+    touch "${frac_label}_genes.txt"
+    touch "${frac_label}.iqtree"
+    touch "${frac_label}.log"
+    touch "${frac_label}.mldist"
+    touch "${frac_label}.model.gz"
+    touch "${frac_label}.splits.nex"
+    touch "${frac_label}.treefile"
     """
 }
 
@@ -299,6 +300,7 @@ workflow {
   // Channel setup
   fasta_ch = channel.fromPath(params.sample, checkIfExists: true)
                     .splitCsv(strip: true, header: true)
+                    .map { row -> tuple(row.sample, file(row.fasta)) }
 
   // Download BUSCO lineage dataset
   busco_db = download_busco_dataset(params.lineage)

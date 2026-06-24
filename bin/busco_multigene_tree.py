@@ -239,7 +239,7 @@ def format_decimal(value: Decimal) -> str:
 def fraction_to_label(frac: Decimal) -> str:
     """Convert a fraction into an exact percentage label."""
     pct = frac * Decimal("100")
-    return f"frac{format_decimal(pct).replace('.', 'p')}pct"
+    return f"frac{format_decimal(pct).replace('.', '_')}pct"
 
 
 def parse_fractions(frac_str: str) -> list[Decimal]:
