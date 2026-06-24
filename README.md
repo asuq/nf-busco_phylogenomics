@@ -24,6 +24,21 @@ species_1,species_1_genome.fasta
 
 Each row represents a fasta file.
 
+If your genomes come from nf-annotation, you can build a BUSCO phylogenomics
+samplesheet from its master table and `sample.csv`:
+
+```bash
+helpers/build_species_representative_sample.py \
+   nf_annotation_master.tsv \
+   nf_annotation_sample.csv \
+   species_representatives.csv
+```
+
+The helper selects rows where `Is_Representative` is `yes`, joins them to the
+nf-annotation sample CSV by `accession`, and writes `sample,fasta` output for
+species representatives. FASTA paths are preserved as written by default and
+validated either as written or relative to the nf-annotation sample CSV.
+
 Now, you can run the pipeline using:
 
 <!-- TODO nf-core: update the following command to include all required parameters for a minimal example -->
@@ -32,6 +47,17 @@ Now, you can run the pipeline using:
 nextflow run ASUQ/busco_phylogenomics \
    -profile <docker/singularity/gwdg/oist/...> \
    --sample sample.csv \
+   --lineage <busco_lineage> \
+   --outdir <OUTDIR>
+```
+
+For representative species generated from nf-annotation, pass the generated
+file instead:
+
+```bash
+nextflow run ASUQ/busco_phylogenomics \
+   -profile <docker/singularity/gwdg/oist/...> \
+   --sample species_representatives.csv \
    --lineage <busco_lineage> \
    --outdir <OUTDIR>
 ```
