@@ -7,6 +7,7 @@ TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/nf-busco-frac-label.XXXXXX")"
 OUT_DIR="$TMP_ROOT/output"
 WORK_DIR="$TMP_ROOT/work"
 NO_CONTAINER_CONFIG="$TMP_ROOT/no_container.config"
+TRACE_FILE="$TMP_ROOT/trace.txt"
 
 cleanup() {
     rm -rf "$TMP_ROOT"
@@ -20,6 +21,10 @@ fail() {
 
 assert_path_exists() {
     [ -e "$1" ] || fail "expected path to exist: $1"
+}
+
+assert_trace_has_process() {
+    grep -Fq "$1" "$TRACE_FILE" || fail "expected trace to include process: $1"
 }
 
 cd "$REPO_ROOT"
@@ -67,6 +72,7 @@ nextflow run main.nf \
     -profile test,local \
     -ansi-log false \
     -work-dir "$WORK_DIR" \
+    -with-trace "$TRACE_FILE" \
     --sample test/sample.csv \
     --lineage bacteria_odb10 \
     --outdir "$OUT_DIR"
@@ -74,5 +80,7 @@ nextflow run main.nf \
 assert_path_exists "$OUT_DIR/frac100pct_results/concat.faa"
 assert_path_exists "$OUT_DIR/frac100pct_results/partitions.nex"
 assert_path_exists "$OUT_DIR/frac100pct_results/frac100pct.iqtree"
+assert_trace_has_process "concat_alignments"
+assert_trace_has_process "run_iqtree"
 
 printf 'Nextflow fraction publishDir stub test passed\n'

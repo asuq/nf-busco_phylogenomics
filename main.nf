@@ -209,8 +209,8 @@ process align_genes {
     """
 }
 
-// Concatenate alignments and infer phylogenetic trees
-process infer_trees {
+// Concatenate trimmed gene alignments
+process concat_alignments {
     label 'process_medium'
     tag   "${frac_label}"
 
@@ -223,13 +223,10 @@ process infer_trees {
     path  trimmed_all                 // all *_trimmed.faa staged as inputs
 
     output:
-    path "concat.faa", optional: true
-    path "partitions.nex", optional: true
-    path "frac*", optional: true
+    tuple val(frac_label), path("concat.faa"), path("partitions.nex"), optional: true, emit: concat_files
 
     script:
     def amas_opts   = (params.amas_opts   ?: '')
-    def iqtree_opts = (params.iqtree_opts ?: '')
     """
     readarray -t GENES < <(tail -n +3 "${gene_list}" | sed -e 's/\r\$//' -e '/^[[:space:]]*\$/d')
 
@@ -250,26 +247,51 @@ process infer_trees {
       --concat-out  concat.faa \
       --concat-part partitions.nex \
       --in-files \${TRIMMED_FILES}
+    """
+
+    stub:
+    """
+    echo "Stub process for concatenating alignments for fraction ${frac_label}"
+    touch "concat.faa"
+    touch "partitions.nex"
+    """
+}
+
+// Infer phylogenetic trees from concatenated alignments
+process run_iqtree {
+    label 'process_medium'
+    tag   "${frac_label}"
+
+    publishDir "${params.outdir}", mode: 'copy', saveAs: { filename ->
+        "${frac_label}_results/${filename}"
+    }
+
+    input:
+    tuple val(frac_label), path(concat_faa), path(partition_file)
+
+    output:
+    path "${frac_label}*", optional: true
+
+    script:
+    def iqtree_opts = (params.iqtree_opts ?: '')
+    """
 
     iqtree ${iqtree_opts} \
       -T   ${task.cpus} \
-      -s   concat.faa \
-      -p   partitions.nex \
+      -s   "${concat_faa}" \
+      -p   "${partition_file}" \
       -pre "${frac_label}"
     """
 
     stub:
     """
     echo "Stub process for inferring trees for fraction ${frac_label}"
-    touch "concat.faa"
-    touch "partitions.nex"
     touch "${frac_label}.best_model.nex"
     touch "${frac_label}.best_scheme"
     touch "${frac_label}.best_scheme.nex"
     touch "${frac_label}.bionj"
     touch "${frac_label}.ckp.gz"
     touch "${frac_label}.contree"
-    touch "${frac_label}_genes.txt"
     touch "${frac_label}.iqtree"
     touch "${frac_label}.log"
     touch "${frac_label}.mldist"
@@ -337,7 +359,7 @@ workflow {
   // Align & trim each gene
   aligned = align_genes(gene_ch)
 
-  // Gather all trimmed files to feed each infer task
+  // Gather all trimmed files to feed each concatenation task
   trimmed_all_ch = aligned.trimmed.collect()
 
   // Build (fraction_label, gene_list_file) tuples for all fractions found
@@ -351,6 +373,7 @@ workflow {
                                     tuple(frac_label, file("${dir}/${frac_label}_genes.txt"))
                                 }
 
-  // Run one infer job per fraction label in parallel
-  infer_trees(frac_gene_file_ch, trimmed_all_ch)
+  // Run one AMAS concat job and one IQ-TREE job per fraction label in parallel
+  concat_results = concat_alignments(frac_gene_file_ch, trimmed_all_ch)
+  run_iqtree(concat_results.concat_files)
 }
